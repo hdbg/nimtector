@@ -1,0 +1,1 @@
+proc peb_check*(): bool = discard

@@ -1,4 +1,4 @@
-import std/[macros, random, hashes, tables, sets, sequtils, algorithm, strformat]
+import std/[macros, random, hashes, sequtils, algorithm]
 
 var 
   entropy {.compileTime.} = initRand(hash(CompileTime & CompileDate) and 0x7FFFFFFF)
@@ -11,19 +11,32 @@ template genUniqueInt(max: int = int.high-1): int =
 
   result
 
+type
+  Arm = object
+    id: int
+    node: NimNode
 
-proc process(stateIdent: NimNode, switchArms: var seq[NimNode], ar: openArray[NimNode], index: int, exitId: int): int {.discardable, compileTime.} = 
-  echo &"called with arms: {repr(switchArms)}, index: {index}, exitId: {exitId}"
-  if index+1 != ar.len:
-    echo "callig nextId"
+  JumpTable = object
+    name: NimNode
+    arms: seq[Arm]
+    entryId, exitId: int
+
+    rawStmts: NimNode
+
+    postIfStmt: NimNode
+
+
+proc processBlock(switchArms: var JumpTable, ar: openArray[NimNode], index: int, exitId: int): int {.discardable, compileTime.} = 
   let 
     n = ar[index]
-    nextId = if index+1 == ar.len: exitId else: process(stateIdent, switchArms, ar, index + 1, exitId)
+    nextId = if index+1 == ar.len: exitId else: processBlock(switchArms, ar, index + 1, exitId)
+    stateIdent = switchArms.name
 
   discard entropy.next
 
   result = genUniqueInt()
 
+  var resultNode: NimNode
 
   case n.kind
   of nnkIfStmt:
@@ -34,89 +47,107 @@ proc process(stateIdent: NimNode, switchArms: var seq[NimNode], ar: openArray[Ni
           comp = arm[0]
         
         # recursively add inner if 
-        let armId = process(stateIdent, switchArms, toSeq(arm[1]), 0, nextId)
+        let armId = processBlock(switchArms, toSeq(arm[1]), 0, nextId)
         resIf.add nnkElifBranch.newTree(
           comp,
           nnkStmtList.newTree(
-            quote do:
-              `stateIdent` = `armId`
+            (quote do:
+              `stateIdent` = `armId`),
+            switchArms.postIfStmt
           )
         )
       elif arm.kind == nnkElse:
         # recursively add inner if 
-        let armId = process(stateIdent, switchArms, toSeq(arm[0]), 0, nextId)
+        let armId = processBlock(switchArms, toSeq(arm[0]), 0, nextId)
         resIf.add  nnkElse.newTree(
           nnkStmtList.newTree(
-            quote do:
-              `stateIdent` = `armId`
+            (quote do:
+              `stateIdent` = `armId`),
+            switchArms.postIfStmt
           )
         )
     
     # add resulting if statement
-    switchArms.add nnkOfBranch.newTree(
-      newLit result,
-      nnkStmtList.newTree(
+    resultNode = nnkStmtList.newTree(
         resIf,
         quote do:
           `stateIdent` = `nextId`
       )
-    )
+
   else:
-    echo "adding nonif branch with ", result
-    switchArms.add nnkOfBranch.newTree(
-      newLit result,
-      nnkStmtList.newTree(
+    resultNode = nnkStmtList.newTree(
         n,
         quote do:
           `stateIdent` = `nextId`
       )
-    )
-
-  echo "arms: ", $(switchArms.repr)
-  echo "\n\n"
   
+  switchArms.arms.add Arm(
+      id: result, 
+      node: resultNode
+  )
 
-macro flatten*(stmts: untyped) = 
-  stmts.expectKind nnkStmtList
-  stmts.expectMinLen 1
+
+proc getTable(jt: var JumpTable) {.compileTime.} = 
+  jt.exitId = genUniqueInt()
+  jt.name = newIdentNode("flatten_state_" & $flattenId)
+
+  flattenId.inc
+  let stmtArr = jt.rawStmts.toSeq
+
+  jt.entryId = processBlock(jt, index=stmtArr.low, ar=stmtArr, exitId=jt.exitId)
+
+  
+proc buildSwitch(j: var JumpTable): NimNode {.compileTime.} = 
+  j.postIfStmt = quote do:
+    continue
+
+  j.getTable()
 
   result = newStmtList()
+  let
+    litName = j.name
+    litEntry = newLit j.entryId
+    litExit = newLit j.exitId
 
-  let 
-    stateIdent = ident("flatten_state_" & $flattenId)
-    exitState: int = genUniqueInt()
-  var 
-    switchArms: seq[NimNode] = @[nnkElse.newTree(
+  result.add quote do:
+    var `litName`: int = `litEntry`
+
+  var caseStmt = nnkCaseStmt.newTree(litName)
+
+  for arm in j.arms.reversed:
+    let id = newLit arm.id
+    caseStmt.add nnkOfBranch.newTree(
+      newLit arm.id,
+      newStmtList(
+      (quote do:
+        echo "executing: ", $`id`),
+      arm.node
+      )
+    )
+
+  caseStmt.add(
+    nnkElse.newTree(
       nnkStmtList.newTree(
         nnkDiscardStmt.newTree(
           newEmptyNode()
         )
       )
-    )] # add empty else stmt so compiler won't scream
-
-  flattenId.inc
-
-  # result.add quote do:
-  #   var `stateIdent`: int = `entryState`
-
-  # build bb table
-
-  let 
-    entryState = process(stateIdent, switchArms=switchArms, index=0, ar=stmts.toSeq, exitId=exitState) # nnkCaseStmts -> first nnkOfBranch -> [0] = literal
-
-  # entropy.shuffle switchArms
+    )
+  )
 
   result.add quote do:
-    var `stateIdent`: int = `entryState`
+    while `litName` != `litExit`:
+      `caseStmt`
 
-  switchArms.reverse
+macro flatten*(stmts: untyped) = 
+  stmts.expectKind nnkStmtList
+  stmts.expectMinLen 1
 
-  var fullCaseStatement = nnkCaseStmt.newTree(stateIdent)
-  for s in switchArms: fullCaseStatement.add s
+  var jt = JumpTable(rawStmts: stmts)
 
-  result.add quote do:
-    while `stateIdent` != `exitState`:
-      `fullCaseStatement`
+  return jt.buildSwitch
+
+  
 
 when isMainModule:
   # dumpAstGen:
@@ -131,25 +162,20 @@ when isMainModule:
   #     1
   #   else:
   #     discard
-  expandMacros:
-    var 
+  var 
       x = 4
       y = 10
       z = 9
+  expandMacros:
     flatten():
-      x = 4
+      echo "x val: ", x
 
-      if x == 4:
-        x = 10
-        y = 18
+      if x < y:
+        x = 40
       else:
-        x = 30
+        echo " x > y"
 
-      z = x + y
-
-      if z > y + 10:
-        y = 18
-      z = 43
+      echo x
 
       
 

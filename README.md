@@ -1,4 +1,4 @@
-![Nimtector Logo](nimtector.png) 
+![Nimtector Logo](assets/nimtector.png) 
 # :shield: nimtector 
 > Semi-automatic code obfuscation solution
 

@@ -1,10 +1,10 @@
-import std/[macros, random, hashes, sequtils, algorithm]
+import std/[macros, sequtils, algorithm]
+import shared
 
 var 
-  entropy {.compileTime.} = initRand(hash(CompileTime & CompileDate) and 0x7FFFFFFF)
   flattenId {.compileTime.}: int = 0
+  uniqueSeen {.compileTime.} = 0
 
-var uniqueSeen {.compileTime.} = 0
 template genUniqueInt(max: int = int.high-1): int = 
   var result = uniqueSeen
   uniqueSeen.inc
@@ -31,8 +31,6 @@ proc processBlock(switchArms: var JumpTable, ar: openArray[NimNode], index: int,
     n = ar[index]
     nextId = if index+1 == ar.len: exitId else: processBlock(switchArms, ar, index + 1, exitId)
     stateIdent = switchArms.name
-
-  discard entropy.next
 
   result = genUniqueInt()
 
@@ -167,15 +165,13 @@ when isMainModule:
       y = 10
       z = 9
   expandMacros:
-    flatten():
-      echo "x val: ", x
-
-      if x < y:
-        x = 40
-      else:
-        echo " x > y"
-
-      echo x
+    # flatten():
+    echo "x val: ", x
+    if x < y:
+      x = 40
+    else:
+      echo " x > y"
+    echo x
 
       
 

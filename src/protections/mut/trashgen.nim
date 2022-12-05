@@ -191,7 +191,8 @@ macro junkCode*(passes: static[int] = 1000, mcfg: static[MutationConfig] = initD
 
 when isMainModule:
   expandMacros:
-    junkcode(50)
+    let a = 120
+    junkcode(1000)
 
   echo "here"
 

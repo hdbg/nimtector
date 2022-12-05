@@ -1,8 +1,6 @@
 ![Nimtector Logo](nimtector.png) 
 # :shield: nimtector 
-Semi-automatic code obfuscation solution
-
-`Yurich Software (c) 2022`
+> Semi-automatic code obfuscation solution
 
 ## Supported transformations
 ### Control flow flattening ✔️
@@ -20,3 +18,7 @@ Creates unique Instruction Set Architecture and interpreter for it. Replaces you
 ### Junk Code Generator ✔️
 
 Inserts meaningless code behind yours to frustrate reverse engineer.
+
+---
+
+`Yurich Software (c) 2022`
